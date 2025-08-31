@@ -81,6 +81,10 @@ jobs:
     - name: Install dependencies
       run: |
         brew update
+        if brew list cmake &>/dev/null; then
+          echo "Uninstalling existing cmake..."
+          brew uninstall cmake
+        fi
         brew install make cmake openssl qt@6
         echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
     
@@ -104,6 +108,10 @@ jobs:
     - name: Install dependencies
       run: |
         brew update
+        if brew list cmake &>/dev/null; then
+          echo "Uninstalling existing cmake..."
+          brew uninstall cmake
+        fi
         brew install make cmake openssl qt@6
         echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
     
@@ -227,7 +235,22 @@ jobs:
           ls -la "$dir"
         done
     
-  
+    - name: Package artifacts
+      run: |
+        cd artifacts
+        for dir in */; do
+          dirname="${dir%/}"
+          if [[ $dirname == *"server"* ]]; then
+            zipname="AdaptixC2-Server-${dirname#*-}.zip"
+          else
+            zipname="AdaptixC2-Client-${dirname#*-}.zip"
+          fi
+          zip -r "$zipname" "$dir"
+        done
+        
+        cd ..
+        zip -r "AdaptixC2-All-Platforms-${{ steps.version.outputs.version }}.zip" artifacts/*.zip
+    
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
