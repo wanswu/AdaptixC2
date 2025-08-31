@@ -198,7 +198,7 @@ jobs:
       build-client-windows-amd64
     ]
     runs-on: ubuntu-latest
-    if: success() && github.event.pull_request.merged == true  # 仅在 PR 合并时创建 Release
+    if: success()
     continue-on-error: true
     
     steps:
