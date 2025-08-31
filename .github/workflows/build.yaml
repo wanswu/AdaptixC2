@@ -1,10 +1,9 @@
 name: Build Adaptix C2
 
 on:
-  pull_request:
+  push:  # 任何提交都会触发工作流
     branches:
-      - main  # 假设上游仓库的主分支是 main，可根据需要修改
-    types: [closed]  # 当 PR 合并时触发
+      - '**'  # 匹配所有分支
 
 jobs:
   build-server:
