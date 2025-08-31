@@ -73,7 +73,7 @@ jobs:
 
   build-client-macos-amd64:
     name: Build Client for macOS (Intel)
-    runs-on: macos-13  # 使用 Intel 版本的 runner
+    runs-on: macos-13
     
     steps:
     - name: Checkout code
@@ -81,7 +81,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        # 检查并卸载已有的 cmake（如果存在）
+        brew update
         if brew list cmake &>/dev/null; then
           echo "Uninstalling existing cmake..."
           brew uninstall cmake
@@ -100,7 +100,7 @@ jobs:
 
   build-client-macos-arm64:
     name: Build Client for macOS (Apple Silicon)
-    runs-on: macos-14  # 使用 M1 runner
+    runs-on: macos-14
     
     steps:
     - name: Checkout code
@@ -108,7 +108,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        # 检查并卸载已有的 cmake（如果存在）
+        brew update
         if brew list cmake &>/dev/null; then
           echo "Uninstalling existing cmake..."
           brew uninstall cmake
@@ -177,7 +177,7 @@ jobs:
           Get-ChildItem -Path "AdaptixClient\build\Release" -Filter "*.exe" -ErrorAction SilentlyContinue | 
             ForEach-Object {
               Copy-Item $_.FullName -Destination "dist-windows\"
-              & "$env:Qt6_DIR\bin\windeployqt.exe" "dist-windows\$($_.Name)"
+              & "$qtBin\windeployqt.exe" "dist-windows\$($_.Name)"
             }
         }
     
@@ -186,7 +186,6 @@ jobs:
       with:
         name: client-windows-amd64
         path: dist-windows/*
-
 
   create-release:
     name: Create Release
@@ -198,10 +197,30 @@ jobs:
       build-client-windows-amd64
     ]
     runs-on: ubuntu-latest
-    if: success()
+    if: success() && github.ref == 'refs/heads/main'  # 仅在提交到 main 分支时创建 Release
     continue-on-error: true
     
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Get version number
+      id: version
+      run: |
+        # 从 README.md 第一行提取版本号（格式：# AdaptixC2 vX.Y）
+        if [ -f "README.md" ]; then
+          VERSION=$(head -n 1 README.md | grep -o 'v[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?')
+          if [ -z "$VERSION" ]; then
+            echo "No valid version found in README.md, using default version 0.0.0"
+            echo "version=0.0.0" >> $GITHUB_OUTPUT
+          else
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "README.md not found, using default version 0.0.0"
+          echo "version=0.0.0" >> $GITHUB_OUTPUT
+        fi
+    
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
@@ -217,10 +236,6 @@ jobs:
           ls -la "$dir"
         done
     
-    - name: Create timestamp
-      id: timestamp
-      run: echo "timestamp=$(date +'%Y%m%d_%H%M%S')" >> $GITHUB_OUTPUT
-    
     - name: Package artifacts
       run: |
         cd artifacts
@@ -235,13 +250,13 @@ jobs:
         done
         
         cd ..
-        zip -r "AdaptixC2-All-Platforms-${{ steps.timestamp.outputs.timestamp }}.zip" artifacts/*.zip
+        zip -r "AdaptixC2-All-Platforms-${{ steps.version.outputs.version }}.zip" artifacts/*.zip
     
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: "v${{ steps.timestamp.outputs.timestamp }}"
-        name: "Adaptix C2 Release ${{ steps.timestamp.outputs.timestamp }}"
+        tag_name: "${{ steps.version.outputs.version }}"
+        name: "Adaptix C2 Release ${{ steps.version.outputs.version }}"
         draft: false
         prerelease: false
         files: |
