@@ -81,6 +81,11 @@ jobs:
     
     - name: Install dependencies
       run: |
+        # 检查并卸载已有的 cmake（如果存在）
+        if brew list cmake &>/dev/null; then
+          echo "Uninstalling existing cmake..."
+          brew uninstall cmake
+        fi
         brew install make cmake openssl qt@6
         echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
     
@@ -103,6 +108,11 @@ jobs:
     
     - name: Install dependencies
       run: |
+        # 检查并卸载已有的 cmake（如果存在）
+        if brew list cmake &>/dev/null; then
+          echo "Uninstalling existing cmake..."
+          brew uninstall cmake
+        fi
         brew install make cmake openssl qt@6
         echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
     
