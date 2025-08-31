@@ -82,10 +82,7 @@ jobs:
     - name: Install dependencies
       run: |
         brew update
-        if brew list cmake &>/dev/null; then
-          echo "Uninstalling existing cmake..."
-          brew uninstall cmake
-        fi
+        brew uninstall cmake openssl
         brew install make cmake openssl qt@6
         echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
     
@@ -109,10 +106,7 @@ jobs:
     - name: Install dependencies
       run: |
         brew update
-        if brew list cmake &>/dev/null; then
-          echo "Uninstalling existing cmake..."
-          brew uninstall cmake
-        fi
+        brew uninstall cmake openssl
         brew install make cmake openssl qt@6
         echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
     
