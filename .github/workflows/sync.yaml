@@ -1,0 +1,122 @@
+name: Daily Update and Build
+
+on:
+  schedule:
+    - cron: '0 16 * * *'  # UTC 16:00 = 北京时间 24:00
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: '强制构建（即使没有更新）'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  UPSTREAM_REPO: Adaptix-Framework/AdaptixC2
+  UPSTREAM_BRANCH: main
+
+jobs:
+  check-and-sync:
+    name: Check for updates and sync
+    runs-on: ubuntu-latest
+    outputs:
+      has_updates: ${{ steps.check_updates.outputs.has_updates }}
+      commit_message: ${{ steps.check_updates.outputs.commit_message }}
+      commits_behind: ${{ steps.check_updates.outputs.commits_behind }}
+      commits_ahead: ${{ steps.check_updates.outputs.commits_ahead }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Configure git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Check for upstream updates
+      id: check_updates
+      run: |
+        # 添加上游仓库
+        git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git || true
+        git fetch upstream ${{ env.UPSTREAM_BRANCH }}
+        
+        # 获取当前和上游的 commit hash
+        LOCAL_COMMIT=$(git rev-parse HEAD)
+        UPSTREAM_COMMIT=$(git rev-parse upstream/${{ env.UPSTREAM_BRANCH }})
+        
+        # 计算落后和领先的提交数
+        COMMITS_BEHIND=$(git rev-list --count HEAD..upstream/${{ env.UPSTREAM_BRANCH }})
+        COMMITS_AHEAD=$(git rev-list --count upstream/${{ env.UPSTREAM_BRANCH }}..HEAD)
+        
+        echo "=== 调试信息 ===" 
+        echo "Local commit: $LOCAL_COMMIT"
+        echo "Upstream commit: $UPSTREAM_COMMIT"
+        echo "Commits behind: $COMMITS_BEHIND"
+        echo "Commits ahead: $COMMITS_AHEAD"
+        echo "Force build: ${{ github.event.inputs.force_build }}"
+        
+        # 检查是否有真正的新提交（只有落后时才需要更新）
+        if [ "$COMMITS_BEHIND" -gt 0 ]; then
+          echo "has_updates=true" >> $GITHUB_OUTPUT
+          echo "commits_behind=$COMMITS_BEHIND" >> $GITHUB_OUTPUT
+          echo "commits_ahead=$COMMITS_AHEAD" >> $GITHUB_OUTPUT
+          
+          # 获取最新的提交信息
+          COMMIT_MSG=$(git log upstream/${{ env.UPSTREAM_BRANCH }} -1 --pretty=format:"%s")
+          echo "commit_message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          
+          echo "### ✅ 检测到上游有 $COMMITS_BEHIND 个新提交" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **落后提交数**: $COMMITS_BEHIND" >> $GITHUB_STEP_SUMMARY
+          echo "- **领先提交数**: $COMMITS_AHEAD" >> $GITHUB_STEP_SUMMARY
+          echo "- **最新提交**: $COMMIT_MSG" >> $GITHUB_STEP_SUMMARY
+          
+          # 显示需要同步的提交
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 需要同步的提交" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          git log --oneline HEAD..upstream/${{ env.UPSTREAM_BRANCH }} >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event.inputs.force_build }}" == "true" ]; then
+          # 强制构建
+          echo "has_updates=true" >> $GITHUB_OUTPUT
+          echo "commits_behind=0" >> $GITHUB_OUTPUT
+          echo "commits_ahead=$COMMITS_AHEAD" >> $GITHUB_OUTPUT
+          echo "commit_message=Force build requested" >> $GITHUB_OUTPUT
+          
+          echo "### ⚡ 强制构建模式" >> $GITHUB_STEP_SUMMARY
+          echo "没有新的上游提交，但由于强制构建选项而继续" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "has_updates=false" >> $GITHUB_OUTPUT
+          echo "commits_behind=0" >> $GITHUB_OUTPUT
+          echo "commits_ahead=$COMMITS_AHEAD" >> $GITHUB_OUTPUT
+          
+          echo "### ℹ️ 没有需要同步的更新" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **您的仓库没有落后于上游**" >> $GITHUB_STEP_SUMMARY
+          echo "- **落后提交数**: 0" >> $GITHUB_STEP_SUMMARY
+          echo "- **领先提交数**: $COMMITS_AHEAD" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$COMMITS_AHEAD" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ 注意：您的仓库领先上游 $COMMITS_AHEAD 个提交" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+    
+    - name: Sync with upstream
+      if: steps.check_updates.outputs.has_updates == 'true' && steps.check_updates.outputs.commits_behind > 0
+      run: |
+        echo "=== 开始同步上游更改 ==="
+        # 合并上游更改
+        if git merge upstream/${{ env.UPSTREAM_BRANCH }} --no-edit; then
+          echo "✅ 成功合并上游更改"
+          git push origin ${{ github.ref_name }}
+        else
+          echo "❌ 合并时出现冲突"
+          git status
+          exit 1
+        fi
