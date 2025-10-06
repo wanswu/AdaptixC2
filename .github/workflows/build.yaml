@@ -1,9 +1,8 @@
 name: Build Adaptix C2
 
 on:
-  push:  # 任何提交都会触发工作流
-    branches:
-      - '**'  # 匹配所有分支
+  workflow_dispatch:
+  workflow_call:  # 允许被其他工作流调用
 
 jobs:
   build-server:
