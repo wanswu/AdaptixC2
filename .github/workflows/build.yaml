@@ -24,7 +24,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo chmod +x ./pre_install_linux.sh && ./pre_install_linux.sh
+        sudo chmod +x ./pre_install_linux_all.sh && ./pre_install_linux_all.sh server
     
     - name: Cache build artifacts
       uses: actions/checkout@v6
@@ -66,7 +66,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: /usr/local/Homebrew
-        key: ${{ runner.os }}-homebrew-${{ hashFiles('pre_install_macos.sh') }}
+        key: ${{ runner.os }}-homebrew-${{ hashFiles('pre_install_macos_client.sh') }}
         restore-keys: |
           ${{ runner.os }}-homebrew-
     
@@ -77,7 +77,7 @@ jobs:
           echo "Uninstalling existing cmake..."
           brew uninstall cmake
         fi
-        sudo chmod +x ./pre_install_macos.sh && ./pre_install_macos.sh
+        sudo chmod +x ./pre_install_macos_client.sh && ./pre_install_macos_client.sh
     
     - name: Cache build artifacts
       uses: actions/cache@v5
