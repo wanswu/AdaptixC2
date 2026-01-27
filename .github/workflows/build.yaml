@@ -1,233 +1,232 @@
-name: Build Adaptix C2
+name: Build and Release
 
 on:
+  push:
+    branches: [ "main" ]
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: write
 
 jobs:
+  # ====================================================
+  # JOB 1: 构建服务端 (Docker)
+  # ====================================================
   build-server:
-    name: Build Server and Extenders
+    name: Build Server (Docker)
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Server via Docker Compose
+        run: |
+          docker compose --profile build-server-ext up --build server-ext-builder
+
+      - name: Fix Permissions
+        run: sudo chown -R $USER:$USER ./AdaptixServer/server-dist
+
+      - name: Archive Server Artifacts
+        run: |
+          cd ./AdaptixServer/server-dist
+          tar -czvf ../../adaptix_server_linux_x64.tar.gz .
+
+      - name: Upload Server Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix_server_linux_x64
+          path: adaptix_server_linux_x64.tar.gz
+          overwrite: true
+
+# ====================================================
+  # JOB 2: 构建客户端 (Windows 终极依赖修复版)
+  # ====================================================
+  build-client:
+    name: Build Client
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: linux
-            arch: amd64
-    
+          - os: ubuntu-latest
+            artifact_name: adaptix_client_linux_elf
+            build_shell: bash
+            output_file: dist/AdaptixClient
+
+          - os: macos-latest
+            artifact_name: adaptix_client_macos_arm64
+            build_shell: bash
+            output_file: dist/AdaptixClient
+
+          - os: macos-15-intel
+            artifact_name: adaptix_client_macos_amd64
+            build_shell: bash
+            output_file: dist/AdaptixClient
+
+          - os: windows-latest
+            artifact_name: adaptix_client_windows.zip
+            build_shell: msys2 {0}
+            output_file: AdaptixClient/build/AdaptixClient.exe
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-    
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo chmod +x ./pre_install_linux_all.sh && ./pre_install_linux_all.sh server
-    
-    - name: Cache build artifacts
-      uses: actions/checkout@v6
-      with:
-        path: |
-          dist
-        key: ${{ runner.os }}-server-${{ matrix.arch }}-${{ hashFiles('server/**', 'extenders/**', 'Makefile') }}
-        restore-keys: |
-          ${{ runner.os }}-server-${{ matrix.arch }}-
-    
-    - name: Build all
-      run: make server-ext
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      # ----------------------------------------------------------------
+      # Windows 环境配置 (MSYS2)
+      # ----------------------------------------------------------------
+      - name: Setup MSYS2 (Windows Only)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-qt6-websockets
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-shadertools
+            mingw-w64-ucrt-x86_64-qt6-imageformats
+            mingw-w64-ucrt-x86_64-qt6-multimedia
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-qt6-5compat
 
-    - name: Upload server artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: server-${{ matrix.os }}-${{ matrix.arch }}
-        path: dist/*
+      # ----------------------------------------------------------------
+      # Linux 环境依赖
+      # ----------------------------------------------------------------
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libssl-dev pkg-config \
+            libgl1-mesa-dev libxkbcommon-dev \
+            qt6-base-dev qt6-base-private-dev \
+            qt6-declarative-dev qt6-declarative-private-dev \
+            libqt6websockets6-dev \
+            libqt6svg6-dev \
+            libqt6shadertools6-dev \
+            qt6-multimedia-dev \
+            qt6-tools-dev \
+            qt6-l10n-tools \
+            qt6-image-formats-plugins
 
-  build-client-macos:
-    name: Build Client for macOS (${{ matrix.runner == 'macos-15' && 'Intel' || 'Apple Silicon' }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - runner: macos-15-intel
-            arch: amd64
-          - runner: macos-latest
-            arch: arm64
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-      with:
-        persist-credentials: false
-    
-    - name: Cache Homebrew dependencies
-      uses: actions/cache@v5
-      with:
-        path: /usr/local/Homebrew
-        key: ${{ runner.os }}-homebrew-${{ hashFiles('pre_install_macos_client.sh') }}
-        restore-keys: |
-          ${{ runner.os }}-homebrew-
-    
-    - name: Install dependencies
-      run: |
-        brew update
-        if brew list cmake &>/dev/null; then
-          echo "Uninstalling existing cmake..."
-          brew uninstall cmake
-        fi
-        sudo chmod +x ./pre_install_macos_client.sh && ./pre_install_macos_client.sh
-    
-    - name: Cache build artifacts
-      uses: actions/cache@v5
-      with:
-        path: |
-          AdaptixClient/build
-          dist
-        key: ${{ runner.os }}-client-${{ matrix.arch }}-${{ hashFiles('AdaptixClient/**', 'Makefile') }}
-        restore-keys: |
-          ${{ runner.os }}-client-${{ matrix.arch }}-
-    
-    - name: Build client
-      run: make client
-    
-    - name: Upload client artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: client-macos-${{ matrix.arch }}
-        path: dist/AdaptixClient
+      # ----------------------------------------------------------------
+      # macOS 环境依赖
+      # ----------------------------------------------------------------
+      - name: Install macOS Dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install qt6
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix qt6)" >> $GITHUB_ENV
 
-  build-client-windows-amd64:
-    name: Build Client for Windows (x64)
-    runs-on: windows-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-    
-    - name: Install Qt
-      uses: jurplel/install-qt-action@v4
-      with:
-        version: '6.6.*'
-        modules: 'qtwebsockets'
-        arch: 'win64_msvc2019_64'
-        cache: true
-    
-    - name: Setup MSVC
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-    
-    - name: Configure CMake
-      run: |
-        cd AdaptixClient
-        mkdir build
-        cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -A x64
-    
-    - name: Build
-      working-directory: AdaptixClient/build
-      run: cmake --build . --config Release
-    
-    - name: Package with dependencies
-      shell: pwsh
-      run: |
-        New-Item -ItemType Directory -Force -Path "dist-windows"
-        
-        $exeFile = Get-ChildItem -Path "AdaptixClient\build" -Filter "*.exe" -Recurse | 
-                   Where-Object { $_.Name -like "*AdaptixClient*" -or $_.Name -like "*Adaptix*" } | 
-                   Select-Object -First 1
-        
-        if ($exeFile) {
-          Write-Host "Found executable: $($exeFile.FullName)"
-          Copy-Item $exeFile.FullName -Destination "dist-windows\"
+      # ----------------------------------------------------------------
+      # Linux / macOS 构建
+      # ----------------------------------------------------------------
+      - name: Build on Linux/macOS
+        if: runner.os != 'Windows'
+        run: |
+          make client || {
+            echo "================ ERROR LOG ================"
+            if [ -f AdaptixClient/cmake_error.log ]; then cat AdaptixClient/cmake_error.log; fi
+            if [ -f AdaptixClient/build_error.log ]; then cat AdaptixClient/build_error.log; fi
+            echo "==========================================="
+            exit 1
+          }
+
+      # ----------------------------------------------------------------
+      # Windows 构建 (MSYS2) - 【这里是重点修改】
+      # ----------------------------------------------------------------
+      - name: Build on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          cd AdaptixClient
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
           
-          $qtBin = "$env:Qt6_DIR\bin"
-          & "$qtBin\windeployqt.exe" "dist-windows\$($exeFile.Name)"
-        } else {
-          Write-Host "Warning: Could not find AdaptixClient executable"
-          Get-ChildItem -Path "AdaptixClient\build\Release" -Filter "*.exe" -ErrorAction SilentlyContinue | 
-            ForEach-Object {
-              Copy-Item $_.FullName -Destination "dist-windows\"
-              & "$qtBin\windeployqt.exe" "dist-windows\$($_.Name)"
-            }
-        }
-    
-    - name: Upload client artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: client-windows-amd64
-        path: dist-windows/*
+          echo ">>> 1. Creating Clean Release Directory..."
+          mkdir release_dist
+          cp build/AdaptixClient.exe release_dist/
+          
+          echo ">>> 2. Running windeployqt (Qt Dependencies)..."
+          windeployqt --release --no-translations --compiler-runtime --dir release_dist release_dist/AdaptixClient.exe
 
-  create-release:
-    name: Create Release
-    needs: [
-      build-server,
-      build-client-macos,
-      build-client-windows-amd64
-    ]
+          echo ">>> 3. Auto-Resolving System DLLs (The Nuclear Option)..."
+          # 使用 ldd 命令列出 exe 的所有依赖
+          # grep "/ucrt64/bin": 只筛选 MSYS2 系统目录下的 DLL
+          # awk '{print $3}': 提取文件全路径
+          # while loop: 一个个复制过去
+          
+          ldd release_dist/AdaptixClient.exe | grep "/ucrt64/bin" | awk '{print $3}' | while read -r dep; do
+              echo "  -> Copying dependency: $dep"
+              cp "$dep" release_dist/
+          done
+
+          # 这里做一个双重保险，防止 ldd 漏掉某些间接依赖 (比如 libstdc++)
+          # 虽然上面的循环应该能抓到，但强制覆盖一下不亏
+          cp /ucrt64/bin/libgcc_s_seh-1.dll release_dist/ 2>/dev/null || true
+          cp /ucrt64/bin/libstdc++-6.dll release_dist/ 2>/dev/null || true
+          cp /ucrt64/bin/libwinpthread-1.dll release_dist/ 2>/dev/null || true
+          
+          echo ">>> DLL Collection Complete."
+
+      # ----------------------------------------------------------------
+      # 打包与上传
+      # ----------------------------------------------------------------
+      - name: Prepare Artifact
+        shell: bash
+        run: |
+          mkdir -p final_dist
+          
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             echo "Zipping Clean Windows Release..."
+             cd AdaptixClient/release_dist
+             7z a ../../final_dist/${{ matrix.artifact_name }} .
+          else
+             if [ -f "${{ matrix.output_file }}" ]; then
+                cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
+             else
+                echo "Error: Output file not found at ${{ matrix.output_file }}"
+                exit 1
+             fi
+          fi
+
+      - name: Upload Client Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: final_dist/${{ matrix.artifact_name }}
+          overwrite: true
+
+  # ====================================================
+  # JOB 3: 发布 Release
+  # ====================================================
+  release:
+    needs: [build-server, build-client]
     runs-on: ubuntu-latest
-    if: success() && github.ref == 'refs/heads/main'  # 仅在提交到 main 分支时创建 Release
-    continue-on-error: true
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-    
-    - name: Get version number
-      id: version
-      run: |
-        # 从 README.md 第一行提取版本号（格式：# AdaptixC2 vX.Y）
-        if [ -f "README.md" ]; then
-          VERSION=$(head -n 1 README.md | grep -o 'v[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?')
-          if [ -z "$VERSION" ]; then
-            echo "No valid version found in README.md, using default version 0.0.0"
-            echo "version=0.0.0" >> $GITHUB_OUTPUT
-          else
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-          fi
-        else
-          echo "README.md not found, using default version 0.0.0"
-          echo "version=0.0.0" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Download all artifacts
-      uses: actions/download-artifact@v7
-      with:
-        path: artifacts
-    
-    - name: Display structure
-      run: |
-        echo "=== Artifacts structure ==="
-        ls -la artifacts/
-        echo "=== Content of each artifact ==="
-        for dir in artifacts/*/; do
-          echo "Content of $dir:"
-          ls -la "$dir"
-        done
-    
-    - name: Package artifacts
-      run: |
-        cd artifacts
-        for dir in */; do
-          dirname="${dir%/}"
-          if [[ $dirname == *"server"* ]]; then
-            zipname="AdaptixC2-Server-${dirname#*-}.zip"
-          else
-            zipname="AdaptixC2-Client-${dirname#*-}.zip"
-          fi
-          zip -r "$zipname" "$dir"
-        done
-    
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: "${{ steps.version.outputs.version }}"
-        name: "Adaptix C2 Release ${{ steps.version.outputs.version }}"
-        draft: false
-        prerelease: false
-        files: |
-          artifacts/*.zip
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate Release Tag
+        id: tag
+        run: echo "release_tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: Build ${{ steps.tag.outputs.release_tag }}
+          draft: false
+          prerelease: false
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
