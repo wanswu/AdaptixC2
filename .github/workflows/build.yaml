@@ -1,308 +1,233 @@
-name: Build and Release
+name: Build Adaptix C2
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  # --- Server Build Job (Linux & Windows) ---
-  build-server-linux-windows:
-    name: Build Server (Linux & Windows)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-          check-latest: true
-          cache-dependency-path: AdaptixServer/go.sum
-
-      - name: Install Dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64 upx zip
-          
-      - name: Build Server (Linux)
-        working-directory: AdaptixServer
-        run: |
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o AdaptixServer-linux-amd64 -v .
-          upx --best --lzma AdaptixServer-linux-amd64
-          zip AdaptixServer-linux-amd64.zip AdaptixServer-linux-amd64
-        
-      - name: Build Server (Windows)
-        working-directory: AdaptixServer
-        run: |
-          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc go build -ldflags="-s -w" -o AdaptixServer-windows-amd64.exe -v .
-          upx --best --lzma AdaptixServer-windows-amd64.exe
-          zip AdaptixServer-windows-amd64.zip AdaptixServer-windows-amd64.exe
-
-      - name: Upload Server Artifacts (Linux/Windows)
-        uses: actions/upload-artifact@v4
-        with:
-          name: AdaptixServer-Linux-Windows
-          path: AdaptixServer/*.zip
-
-  # --- Server Build Job (macOS) ---
-  build-server-macos:
-    name: Build Server (macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-          check-latest: true
-          cache-dependency-path: AdaptixServer/go.sum
-
-      - name: Build Server (macOS Intel)
-        working-directory: AdaptixServer
-        run: |
-          CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o AdaptixServer-darwin-amd64 -v .
-          zip AdaptixServer-darwin-amd64.zip AdaptixServer-darwin-amd64
-
-      - name: Build Server (macOS Apple Silicon)
-        working-directory: AdaptixServer
-        run: |
-          CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o AdaptixServer-darwin-arm64 -v .
-          zip AdaptixServer-darwin-arm64.zip AdaptixServer-darwin-arm64
-
-      - name: Upload Server Artifacts (macOS)
-        uses: actions/upload-artifact@v4
-        with:
-          name: AdaptixServer-macOS
-          path: AdaptixServer/*.zip
-
-  # --- Linux Client Build Job ---
-  build-client-linux:
-    name: Build Client (Linux)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libxkbcommon-dev libvulkan-dev libfuse2 file wget \
-            libxcb-cursor0 libxcb-cursor-dev libxcb-util-dev libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxkbcommon-x11-dev
-          
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v3
-        with:
-          version: '6.7.0'
-          modules: 'qtwebsockets qt5compat'
-          
-      - name: Configure CMake
-        run: cmake -B build -S AdaptixClient -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-        
-      - name: Build
-        run: |
-          cmake --build build
-          DESTDIR=AppDir cmake --install build
-          
-      - name: Cleanup Unused Qt Plugins
-        run: |
-           # Linuxdeploy tries to bundle everything, but Mimer/ODBC often have missing system deps.
-           # Remove them to prevent linuxdeploy failure.
-           if [ -d "$Qt6_DIR/plugins/sqldrivers" ]; then
-             rm -f "$Qt6_DIR/plugins/sqldrivers/libqsqlmimer.so"
-             rm -f "$Qt6_DIR/plugins/sqldrivers/libqsqlodbc.so"
-             rm -f "$Qt6_DIR/plugins/sqldrivers/libqsqlpsql.so"
-           fi
-        
-      - name: Create AppImage
-        run: |
-          # Get linuxdeploy
-          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-          
-          # Get Qt plugin
-          wget https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
-          chmod +x linuxdeploy-plugin-qt-x86_64.AppImage
-          
-          # Prepare Icon and Desktop file if missing (Assuming simple setup)
-            
-          # Just in case, create a simple desktop entry if source doesn't have it
-          mkdir -p AppDir/usr/share/applications/
-          echo "[Desktop Entry]
-          Type=Application
-          Name=AdaptixClient
-          Exec=AdaptixClient
-          Icon=AdaptixClient
-          Categories=Utility;" > AppDir/usr/share/applications/AdaptixClient.desktop
-          
-          # Generate AppImage
-          # We don't need to manually create the icon if CMake install put it there. 
-          # But to be safe if cmake skipped it (due to path issues), we copy it from source.
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps/
-          if [ -f AdaptixClient/Resources/icons/os/linux/AdaptixClient.png ]; then
-            cp AdaptixClient/Resources/icons/os/linux/AdaptixClient.png AppDir/usr/share/icons/hicolor/256x256/apps/AdaptixClient.png
-          else
-            # Only create dummy if real one missing to avoid error, but try to use real one
-             touch AppDir/usr/share/icons/hicolor/256x256/apps/AdaptixClient.png
-          fi
-          
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
-
-          
-      - name: Upload Client (Linux)
-        uses: actions/upload-artifact@v4
-        with:
-          name: AdaptixClient-Linux
-          path: AdaptixClient-*.AppImage
-
-  # --- macOS Client Build Job ---
-  build-client-macos:
-    name: Build Client (macOS ${{ matrix.arch }})
-    runs-on: macos-14
+  build-server:
+    name: Build Server and Extenders
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - arch: x64
-            osx_arch: "x86_64"
-          - arch: arm64
-            osx_arch: "arm64"
+          - os: linux
+            arch: amd64
+    
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          
-      - name: Install Dependencies
-        run: brew install ninja openssl
-        
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v3
-        with:
-          version: '6.7.0'
-          modules: 'qtwebsockets qt5compat'
-          
-      - name: Configure CMake
-        run: |
-          cmake -B build -S AdaptixClient -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl) \
-            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.osx_arch }}
-        
-      - name: Build
-        run: cmake --build build
-      
-      - name: Deploy Qt (Mac)
-        run: |
-          macdeployqt build/AdaptixClient.app -dmg -verbose=1
-          cd build
-          zip -r AdaptixClient-${{ matrix.arch }}.zip AdaptixClient.app
+    - name: Checkout code
+      uses: actions/checkout@latest
+    
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo chmod +x ./pre_install_linux.sh && ./pre_install_linux.sh
+    
+    - name: Cache build artifacts
+      uses: actions/checkout@latest
+      with:
+        path: |
+          dist
+        key: ${{ runner.os }}-server-${{ matrix.arch }}-${{ hashFiles('server/**', 'extenders/**', 'Makefile') }}
+        restore-keys: |
+          ${{ runner.os }}-server-${{ matrix.arch }}-
+    
+    - name: Build all
+      run: make server-ext
 
-      - name: Upload Client (macOS)
-        uses: actions/upload-artifact@v4
-        with:
-          name: AdaptixClient-macOS-${{ matrix.arch }}
-          path: |
-            build/AdaptixClient.dmg
-            build/AdaptixClient-*.zip
 
-  # --- Windows Client Build Job ---
-  build-client-windows:
-    name: Build Client (Windows)
-    runs-on: windows-2022
+    - name: Upload server artifacts
+      uses: actions/upload-artifact@latest
+      with:
+        name: server-${{ matrix.os }}-${{ matrix.arch }}
+        path: dist/*
+
+  build-client-macos:
+    name: Build Client for macOS (${{ matrix.runner == 'macos-13' && 'Intel' || 'Apple Silicon' }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            arch: amd64
+          - runner: macos-14
+            arch: arm64
+    
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    - name: Checkout code
+      uses: actions/checkout@latest
+      with:
+        persist-credentials: false
+    
+    - name: Cache Homebrew dependencies
+      uses: actions/cache@latest
+      with:
+        path: /usr/local/Homebrew
+        key: ${{ runner.os }}-homebrew-${{ hashFiles('pre_install_macos.sh') }}
+        restore-keys: |
+          ${{ runner.os }}-homebrew-
+    
+    - name: Install dependencies
+      run: |
+        brew update
+        if brew list cmake &>/dev/null; then
+          echo "Uninstalling existing cmake..."
+          brew uninstall cmake
+        fi
+        sudo chmod +x ./pre_install_macos.sh && ./pre_install_macos.sh
+    
+    - name: Cache build artifacts
+      uses: actions/cache@latest
+      with:
+        path: |
+          AdaptixClient/build
+          dist
+        key: ${{ runner.os }}-client-${{ matrix.arch }}-${{ hashFiles('AdaptixClient/**', 'Makefile') }}
+        restore-keys: |
+          ${{ runner.os }}-client-${{ matrix.arch }}-
+    
+    - name: Build client
+      run: make client
+    
+    - name: Upload client artifacts
+      uses: actions/upload-artifact@latest
+      with:
+        name: client-macos-${{ matrix.arch }}
+        path: dist/AdaptixClient
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v3
-        with:
-          version: '6.7.0'
-          modules: 'qtwebsockets qt5compat'
-          
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install OpenSSL & Ninja
-        run: choco install openssl ninja --no-progress
-      
-      - name: Configure CMake
-        run: |
-           cmake -B build -S AdaptixClient -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL-Win64"
+  build-client-windows-amd64:
+    name: Build Client for Windows (x64)
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@latest
+    
+    - name: Install Qt
+      uses: jurplel/install-qt-action@latest
+      with:
+        version: '6.6.*'
+        modules: 'qtwebsockets'
+        arch: 'win64_msvc2019_64'
+        cache: true
+    
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@latest
+      with:
+        arch: x64
+    
+    - name: Configure CMake
+      run: |
+        cd AdaptixClient
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -A x64
+    
+    - name: Build
+      working-directory: AdaptixClient/build
+      run: cmake --build . --config Release
+    
+    - name: Package with dependencies
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "dist-windows"
         
-      - name: Build
-        run: cmake --build build
-      
-      - name: Deploy Qt (Windows)
-        shell: cmd
-        run: |
-          mkdir dist
-          copy build\AdaptixClient.exe dist\
-          windeployqt --release --compiler-runtime --dir dist dist\AdaptixClient.exe
-
-      - name: Package Zip (Windows)
-        shell: cmd
-        run: |
-          :: Just zip the dist folder
-          cd dist
-          7z a -tzip ..\AdaptixClient-Windows.zip *
+        $exeFile = Get-ChildItem -Path "AdaptixClient\build" -Filter "*.exe" -Recurse | 
+                   Where-Object { $_.Name -like "*AdaptixClient*" -or $_.Name -like "*Adaptix*" } | 
+                   Select-Object -First 1
         
-      - name: Upload Client (Windows)
-        uses: actions/upload-artifact@v4
-        with:
-          name: AdaptixClient-Windows
-          path: AdaptixClient-Windows.zip
+        if ($exeFile) {
+          Write-Host "Found executable: $($exeFile.FullName)"
+          Copy-Item $exeFile.FullName -Destination "dist-windows\"
           
-  # --- Release Job (Continuous) ---
+          $qtBin = "$env:Qt6_DIR\bin"
+          & "$qtBin\windeployqt.exe" "dist-windows\$($exeFile.Name)"
+        } else {
+          Write-Host "Warning: Could not find AdaptixClient executable"
+          Get-ChildItem -Path "AdaptixClient\build\Release" -Filter "*.exe" -ErrorAction SilentlyContinue | 
+            ForEach-Object {
+              Copy-Item $_.FullName -Destination "dist-windows\"
+              & "$qtBin\windeployqt.exe" "dist-windows\$($_.Name)"
+            }
+        }
+    
+    - name: Upload client artifacts
+      uses: actions/upload-artifact@latest
+      with:
+        name: client-windows-amd64
+        path: dist-windows/*
+
   create-release:
     name: Create Release
+    needs: [
+      build-server,
+      build-client-macos,
+      build-client-windows-amd64
+    ]
     runs-on: ubuntu-latest
-    needs: [build-server-linux-windows, build-server-macos, build-client-linux, build-client-macos, build-client-windows]
+    if: success() && github.ref == 'refs/heads/main'  # 仅在提交到 main 分支时创建 Release
+    continue-on-error: true
+    
     steps:
-      - name: Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          
-      - name: Display downloaded files
-        run: ls -R artifacts
-
-      - name: Rename Artifacts
-        run: |
-          # Client Renaming
-          mv artifacts/AdaptixClient-Linux/AdaptixClient-*.AppImage artifacts/AdaptixClient-Linux.AppImage
-          
-          # macOS
-          mv artifacts/AdaptixClient-macOS-x64/AdaptixClient.dmg artifacts/AdaptixClient-macOS-x64.dmg
-          mv artifacts/AdaptixClient-macOS-x64/AdaptixClient-*.zip artifacts/AdaptixClient-macOS-x64.zip
-          
-          mv artifacts/AdaptixClient-macOS-arm64/AdaptixClient.dmg artifacts/AdaptixClient-macOS-arm64.dmg
-          mv artifacts/AdaptixClient-macOS-arm64/AdaptixClient-*.zip artifacts/AdaptixClient-macOS-arm64.zip
-          
-          mv artifacts/AdaptixClient-Windows/AdaptixClient-Windows.zip artifacts/AdaptixClient-Windows.zip
-          
-          # Server Moving (Flattening)
-          mkdir -p artifacts/server
-          cp artifacts/AdaptixServer-Linux-Windows/*.zip artifacts/server/
-          cp artifacts/AdaptixServer-macOS/*.zip artifacts/server/
-
-      - name: Release (Continuous)
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: latest
-          name: Latest Build
-          body: "Latest build from main branch."
-          files: |
-            artifacts/server/*
-            artifacts/AdaptixClient-Linux.AppImage
-            artifacts/AdaptixClient-macOS-x64.dmg
-            artifacts/AdaptixClient-macOS-x64.zip
-            artifacts/AdaptixClient-macOS-arm64.dmg
-            artifacts/AdaptixClient-macOS-arm64.zip
-            artifacts/AdaptixClient-Windows.zip
-          draft: false
-          prerelease: false
+    - name: Checkout code
+      uses: actions/checkout@latest
+    
+    - name: Get version number
+      id: version
+      run: |
+        # 从 README.md 第一行提取版本号（格式：# AdaptixC2 vX.Y）
+        if [ -f "README.md" ]; then
+          VERSION=$(head -n 1 README.md | grep -o 'v[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?')
+          if [ -z "$VERSION" ]; then
+            echo "No valid version found in README.md, using default version 0.0.0"
+            echo "version=0.0.0" >> $GITHUB_OUTPUT
+          else
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "README.md not found, using default version 0.0.0"
+          echo "version=0.0.0" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@latest
+      with:
+        path: artifacts
+    
+    - name: Display structure
+      run: |
+        echo "=== Artifacts structure ==="
+        ls -la artifacts/
+        echo "=== Content of each artifact ==="
+        for dir in artifacts/*/; do
+          echo "Content of $dir:"
+          ls -la "$dir"
+        done
+    
+    - name: Package artifacts
+      run: |
+        cd artifacts
+        for dir in */; do
+          dirname="${dir%/}"
+          if [[ $dirname == *"server"* ]]; then
+            zipname="AdaptixC2-Server-${dirname#*-}.zip"
+          else
+            zipname="AdaptixC2-Client-${dirname#*-}.zip"
+          fi
+          zip -r "$zipname" "$dir"
+        done
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@latest
+      with:
+        tag_name: "${{ steps.version.outputs.version }}"
+        name: "Adaptix C2 Release ${{ steps.version.outputs.version }}"
+        draft: false
+        prerelease: false
+        files: |
+          artifacts/*.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
