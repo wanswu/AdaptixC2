@@ -50,10 +50,8 @@ jobs:
   build-client:
     name: Build Client (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    needs: build-server
     permissions:
       contents: read
-
     strategy:
       fail-fast: true
       matrix:
