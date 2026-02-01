@@ -234,7 +234,7 @@ jobs:
               **Auto-built release**
               
               - Commit: ${{ github.sha }}
-              - Built at: $(date -u +"%Y-%m-%d %H:%M UTC")
+
               
               Artifacts included:
               - Server: Linux x64
